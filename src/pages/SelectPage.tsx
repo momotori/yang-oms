@@ -66,7 +66,7 @@ export default function SelectPage() {
                   disabled={!selected}
                   className="w-full h-12 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold text-sm rounded-xl transition-colors flex items-center justify-center gap-2"
                 >
-                  부품 주문하기
+                  주문하기
                   <ArrowRight size={16} />
                 </button>
               </>
