@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, LogOut, Settings, Users, Box, Wrench, ClipboardList as ClipboardListIcon } from 'lucide-react';
+import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, LogOut, Settings, Users, Box, Wrench, Bell, BellOff, ClipboardList as ClipboardListIcon } from 'lucide-react';
 import { supabase, type MasterItem, type Order } from '../lib/supabase';
 
 type TableName = 'master_orderers' | 'master_models' | 'master_hoses';
@@ -46,6 +46,9 @@ export default function AdminPage() {
   });
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const prevOrderIdsRef = useRef<Set<string> | null>(null);
 
   const [newName, setNewName] = useState<Record<TableName, string>>({
     master_orderers: '',
@@ -104,6 +107,11 @@ export default function AdminPage() {
   }
 
   useEffect(() => {
+    audioRef.current = new Audio('/notification.wav');
+    audioRef.current.preload = 'auto';
+  }, []);
+
+  useEffect(() => {
     if (session) {
       fetchAll();
 
@@ -137,7 +145,17 @@ export default function AdminPage() {
 
   async function fetchOrders() {
     const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
-    if (data) setOrders(data);
+    if (data) {
+      const currentIds = new Set(data.map(o => o.id));
+      if (soundEnabled && prevOrderIdsRef.current) {
+        const hasNew = data.some(o => !prevOrderIdsRef.current!.has(o.id));
+        if (hasNew) {
+          audioRef.current?.play().catch(() => {});
+        }
+      }
+      prevOrderIdsRef.current = currentIds;
+      setOrders(data);
+    }
   }
 
   async function addItem(table: TableName) {
@@ -257,6 +275,13 @@ export default function AdminPage() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSoundEnabled(v => !v)}
+              className={`p-1.5 rounded-lg transition-colors ${soundEnabled ? 'text-blue-600 hover:bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
+              title={soundEnabled ? '알림음 켜짐' : '알림음 꺼짐'}
+            >
+              {soundEnabled ? <Bell size={16} /> : <BellOff size={16} />}
+            </button>
             <div className="w-2 h-2 bg-emerald-400 rounded-full" />
             <span className="text-xs text-gray-500 hidden sm:inline">{session?.user?.email}</span>
 

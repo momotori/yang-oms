@@ -1,18 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Bell, BellOff, Clock, RefreshCw } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
 import { supabase, type Order } from '../lib/supabase';
 
 export default function OrderStatusPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const prevCountRef = useRef<number | null>(null);
 
   useEffect(() => {
-    audioRef.current = new Audio('/notification.wav');
-    audioRef.current.preload = 'auto';
-
     fetchOrders();
 
     const channel = supabase
@@ -32,14 +26,7 @@ export default function OrderStatusPage() {
       .select('*')
       .eq('status', '대기')
       .order('created_at', { ascending: false });
-    if (data) {
-      setOrders(data);
-      const newCount = data.length;
-      if (soundEnabled && prevCountRef.current !== null && newCount > prevCountRef.current) {
-        audioRef.current?.play().catch(() => {});
-      }
-      prevCountRef.current = newCount;
-    }
+    if (data) setOrders(data);
     setLoading(false);
   }
 
@@ -54,22 +41,13 @@ export default function OrderStatusPage() {
             </a>
             <span className="font-semibold text-gray-800 text-sm">주문 현황</span>
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setSoundEnabled((v) => !v)}
-              className={`p-2 rounded-lg transition-colors ${soundEnabled ? 'text-blue-600 hover:bg-blue-50' : 'text-gray-400 hover:bg-gray-100'}`}
-              title={soundEnabled ? '알림음 켜짐' : '알림음 꺼짐'}
-            >
-              {soundEnabled ? <Bell size={16} /> : <BellOff size={16} />}
-            </button>
-            <button
-              onClick={fetchOrders}
-              className="p-2 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-              title="새로고침"
-            >
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
+          <button
+            onClick={fetchOrders}
+            className="p-2 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            title="새로고침"
+          >
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
         </div>
       </header>
 
