@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Clock, RefreshCw } from 'lucide-react';
-import { supabase, type Order } from '../lib/supabase';
+import { ArrowLeft, Clock, CheckCircle, RefreshCw, Pencil } from 'lucide-react';
+import { supabase, type Order, type MasterItem, type OrderInsert } from '../lib/supabase';
+import OrderEditModal from '../components/OrderEditModal';
 
 export default function OrderStatusPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-
+  const [models, setModels] = useState<MasterItem[]>([]);
+  const [hoses, setHoses] = useState<MasterItem[]>([]);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
   useEffect(() => {
+    fetchMasters();
     fetchOrders();
 
     const channel = supabase
@@ -19,15 +24,45 @@ export default function OrderStatusPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  async function fetchMasters() {
+    const [m, h] = await Promise.all([
+      supabase.from('master_models').select('*').order('sort_order'),
+      supabase.from('master_hoses').select('*').order('sort_order'),
+    ]);
+    if (m.data) setModels(m.data);
+    if (h.data) setHoses(h.data);
+  }
+
   async function fetchOrders() {
     setLoading(true);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data } = await supabase
       .from('orders')
       .select('*')
-      .eq('status', '대기')
-      .order('created_at', { ascending: false });
-    if (data) setOrders(data);
+      .or(`status.eq.대기,and(status.eq.완료,updated_at.gte.${sevenDaysAgo})`)
+      .order('delivery_month')
+      .order('delivery_day')
+      .order('orderer_name');
+    if (data) {
+      const sorted = [...data].sort((a, b) => {
+        const aWaiting = a.status === '대기' ? 0 : 1;
+        const bWaiting = b.status === '대기' ? 0 : 1;
+        if (aWaiting !== bWaiting) return aWaiting - bWaiting;
+        if (a.delivery_month !== b.delivery_month) return a.delivery_month - b.delivery_month;
+        if (a.delivery_day !== b.delivery_day) return a.delivery_day - b.delivery_day;
+        return a.orderer_name.localeCompare(b.orderer_name, 'ko');
+      });
+      setOrders(sorted);
+    }
     setLoading(false);
+  }
+
+  async function updateOrder(id: string, data: Partial<OrderInsert>) {
+    setEditLoading(true);
+    await supabase.from('orders').update(data).eq('id', id);
+    setEditLoading(false);
+    setEditingOrder(null);
+    fetchOrders();
   }
 
   return (
@@ -43,9 +78,10 @@ export default function OrderStatusPage() {
           </div>
           <button
             onClick={fetchOrders}
-            className="p-2 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors text-sm"
             title="새로고침"
           >
+            <span>새로고침</span>
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
@@ -54,14 +90,20 @@ export default function OrderStatusPage() {
       <div className="flex-1 max-w-3xl mx-auto w-full px-4 py-4">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">처리 대기 중인 주문</h2>
-            <span className="text-xs text-gray-400 bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full font-medium">{orders.length}건</span>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-700">주문 현황</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full font-medium">
+                대기 {orders.filter(o => o.status === '대기').length}건
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
             {loading ? (
               <div className="py-12 text-center text-sm text-gray-400">불러오는 중...</div>
-            ) : orders.length === 0 ? (
+            ) : orders.filter(o => o.status === '대기').length === 0 && orders.length === 0 ? (
               <div className="py-12 text-center">
                 <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-3">
                   <Clock size={20} className="text-emerald-600" />
@@ -73,7 +115,7 @@ export default function OrderStatusPage() {
               <table className="w-full text-xs min-w-[600px]">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
-                    {['출고예정일', '주문자', '모델', '호스', '수량', '출고처', '특이사항'].map(h => (
+                    {['수정', '상태', '출고예정일', '주문자', '모델', '호스', '수량', '출고처', '특이사항'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -84,6 +126,23 @@ export default function OrderStatusPage() {
                       key={order.id}
                       className={`border-b border-gray-50 transition-colors hover:bg-amber-50/30 ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}
                     >
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <button
+                          onClick={() => setEditingOrder(order)}
+                          className="p-1 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          order.status === '완료' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {order.status === '완료' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                          {order.status}
+                        </span>
+                      </td>
                       <td className="px-3 py-3 whitespace-nowrap text-gray-700 font-semibold">{order.delivery_month}/{order.delivery_day}</td>
                       <td className="px-3 py-3 whitespace-nowrap text-gray-700">{order.orderer_name}</td>
                       <td className="px-3 py-3 whitespace-nowrap text-gray-700">{order.model_name}</td>
@@ -99,6 +158,17 @@ export default function OrderStatusPage() {
           </div>
         </div>
       </div>
+
+      {editingOrder && (
+        <OrderEditModal
+          order={editingOrder}
+          models={models}
+          hoses={hoses}
+          onSave={data => updateOrder(editingOrder.id, data)}
+          onCancel={() => setEditingOrder(null)}
+          loading={editLoading}
+        />
+      )}
     </div>
   );
 }

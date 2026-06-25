@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, LogOut, Settings, Users, Box, Wrench, Bell, BellOff, ClipboardList as ClipboardListIcon } from 'lucide-react';
-import { supabase, type MasterItem, type Order } from '../lib/supabase';
+import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, LogOut, Settings, Users, Box, Wrench, Bell, BellOff, ClipboardList as ClipboardListIcon, Pencil, CheckCheck, Megaphone } from 'lucide-react';
+import { supabase, type MasterItem, type Order, type OrderInsert } from '../lib/supabase';
+import OrderEditModal from '../components/OrderEditModal';
 
 type TableName = 'master_orderers' | 'master_models' | 'master_hoses';
 
@@ -17,12 +18,17 @@ const SECTIONS: MasterSection[] = [
   { key: 'master_hoses', label: '호스 규격 관리', icon: Wrench },
 ];
 
+const STATUS_CYCLE: Record<string, string> = {
+  '대기': '완료',
+  '완료': '대기',
+};
+
 const STATUS_COLORS: Record<string, string> = {
   '대기': 'bg-amber-50 text-amber-700 border border-amber-200',
   '완료': 'bg-emerald-50 text-emerald-700 border border-emerald-200',
 };
 
-type AdminView = 'orders' | TableName;
+type AdminView = 'orders' | 'notices' | TableName;
 
 export default function AdminPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -50,6 +56,9 @@ export default function AdminPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevOrderIdsRef = useRef<Set<string> | null>(null);
 
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+
   const [newName, setNewName] = useState<Record<TableName, string>>({
     master_orderers: '',
     master_models: '',
@@ -58,6 +67,14 @@ export default function AdminPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
+
+  const [noticeContent, setNoticeContent] = useState('');
+  const [noticeId, setNoticeId] = useState<string | null>(null);
+  const [noticeSaving, setNoticeSaving] = useState(false);
+  const [noticeSaved, setNoticeSaved] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -69,18 +86,58 @@ export default function AdminPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const SESSION_DURATION_MS = 8 * 60 * 60 * 1000; // 8시간
+  const SESSION_START_KEY = 'admin_session_start';
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+      const s = data.session;
+      if (s) {
+        const stored = localStorage.getItem(SESSION_START_KEY);
+        if (!stored) {
+          localStorage.setItem(SESSION_START_KEY, String(Date.now()));
+        } else if (Date.now() - Number(stored) >= SESSION_DURATION_MS) {
+          supabase.auth.signOut({ scope: 'local' }).then(() => window.location.reload());
+          return;
+        }
+      }
+      setSession(s);
       setAuthLoading(false);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      if (newSession) {
+        if (!localStorage.getItem(SESSION_START_KEY)) {
+          localStorage.setItem(SESSION_START_KEY, String(Date.now()));
+        }
+      } else {
+        localStorage.removeItem(SESSION_START_KEY);
+      }
       setSession(newSession);
     });
 
     return () => { listener.subscription.unsubscribe(); };
   }, []);
+
+  // 8시간 경과 시 자동 로그아웃
+  useEffect(() => {
+    if (!session) return;
+
+    const stored = localStorage.getItem(SESSION_START_KEY);
+    const elapsed = stored ? Date.now() - Number(stored) : 0;
+    const remaining = SESSION_DURATION_MS - elapsed;
+
+    if (remaining <= 0) {
+      supabase.auth.signOut({ scope: 'local' }).then(() => window.location.reload());
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      supabase.auth.signOut({ scope: 'local' }).then(() => window.location.reload());
+    }, remaining);
+
+    return () => clearTimeout(timer);
+  }, [session]);
 
   async function handleAuth() {
     setAuthError('');
@@ -103,12 +160,15 @@ export default function AdminPage() {
   }
 
   async function handleSignOut() {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
+    window.location.reload();
   }
 
   useEffect(() => {
-    audioRef.current = new Audio('/notification.wav');
-    audioRef.current.preload = 'auto';
+    const audio = new Audio('/notification.wav');
+    audio.preload = 'auto';
+    audio.loop = true;
+    audioRef.current = audio;
   }, []);
 
   useEffect(() => {
@@ -122,14 +182,37 @@ export default function AdminPage() {
         })
         .subscribe();
 
-      return () => { supabase.removeChannel(channel); };
+      const timer = setInterval(() => { fetchOrders(); }, 60000);
+
+      return () => { supabase.removeChannel(channel); clearInterval(timer); };
     }
   }, [session]);
 
   async function fetchAll() {
     setLoading(true);
-    await Promise.all([fetchMasters(), fetchOrders()]);
+    await Promise.all([fetchMasters(), fetchOrders(), fetchNotice()]);
     setLoading(false);
+  }
+
+  async function fetchNotice() {
+    const { data } = await supabase.from('notices').select('id, content').limit(1).single();
+    if (data) {
+      setNoticeId(data.id);
+      setNoticeContent(data.content);
+    }
+  }
+
+  async function saveNotice() {
+    setNoticeSaving(true);
+    if (noticeId) {
+      await supabase.from('notices').update({ content: noticeContent, updated_at: new Date().toISOString() }).eq('id', noticeId);
+    } else {
+      const { data } = await supabase.from('notices').insert([{ content: noticeContent }]).select().single();
+      if (data) setNoticeId(data.id);
+    }
+    setNoticeSaving(false);
+    setNoticeSaved(true);
+    setTimeout(() => setNoticeSaved(false), 2000);
   }
 
   async function fetchMasters() {
@@ -143,18 +226,37 @@ export default function AdminPage() {
     setMasters(updated);
   }
 
+  function sortOrders(data: Order[]): Order[] {
+    return [...data].sort((a, b) => {
+      const aNew = !a.acknowledged_at ? 0 : 1;
+      const bNew = !b.acknowledged_at ? 0 : 1;
+      if (aNew !== bNew) return aNew - bNew;
+      const statusRank = (s: string) => s === '완료' ? 1 : 0;
+      const aStatus = statusRank(a.status);
+      const bStatus = statusRank(b.status);
+      if (aStatus !== bStatus) return aStatus - bStatus;
+      if (a.delivery_month !== b.delivery_month) return a.delivery_month - b.delivery_month;
+      if (a.delivery_day !== b.delivery_day) return a.delivery_day - b.delivery_day;
+      return a.orderer_name.localeCompare(b.orderer_name, 'ko');
+    });
+  }
+
   async function fetchOrders() {
-    const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    const { data } = await supabase.from('orders').select('*');
     if (data) {
       const currentIds = new Set(data.map(o => o.id));
-      if (soundEnabled && prevOrderIdsRef.current) {
-        const hasNew = data.some(o => !prevOrderIdsRef.current!.has(o.id));
-        if (hasNew) {
-          audioRef.current?.play().catch(() => {});
-        }
+      const hasUnacknowledged = data.some(o => !o.acknowledged_at);
+      const hasNew = prevOrderIdsRef.current !== null && data.some(o => !prevOrderIdsRef.current!.has(o.id));
+      if (soundEnabled && hasNew && hasUnacknowledged && audioRef.current?.paused) {
+        audioRef.current?.play().catch(() => {});
+      }
+      if (!hasUnacknowledged && audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
       }
       prevOrderIdsRef.current = currentIds;
-      setOrders(data);
+      setOrders(sortOrders(data));
+      if (hasNew) setCurrentPage(1);
     }
   }
 
@@ -194,6 +296,30 @@ export default function AdminPage() {
   async function deleteOrder(id: string) {
     if (!confirm('주문을 삭제하시겠습니까?')) return;
     await supabase.from('orders').delete().eq('id', id);
+    fetchOrders();
+  }
+
+  async function updateOrder(id: string, data: Partial<OrderInsert>) {
+    setEditLoading(true);
+    await supabase.from('orders').update(data).eq('id', id);
+    setEditLoading(false);
+    setEditingOrder(null);
+    fetchOrders();
+  }
+
+  const newOrdersCount = orders.filter(o => !o.acknowledged_at).length;
+
+  async function acknowledgeAllOrders() {
+    const newOrderIds = orders.filter(o => !o.acknowledged_at).map(o => o.id);
+    if (newOrderIds.length === 0) return;
+    if (audioRef.current && !audioRef.current.paused) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
+    await supabase
+      .from('orders')
+      .update({ acknowledged_at: new Date().toISOString() })
+      .in('id', newOrderIds);
     fetchOrders();
   }
 
@@ -271,7 +397,7 @@ export default function AdminPage() {
               <ArrowLeft size={18} />
             </a>
             <span className="font-semibold text-gray-800 text-sm">
-              {view === 'orders' ? '주문 관리' : SECTIONS.find(s => s.key === view)?.label}
+              {view === 'orders' ? '주문 관리' : view === 'notices' ? '공지사항' : SECTIONS.find(s => s.key === view)?.label}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -315,6 +441,14 @@ export default function AdminPage() {
                       </button>
                     );
                   })}
+                  <div className="border-t border-gray-100 my-1" />
+                  <button
+                    onClick={() => { setView('notices'); setMenuOpen(false); }}
+                    className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-colors ${view === 'notices' ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <Megaphone size={15} />
+                    공지사항
+                  </button>
                 </div>
               )}
             </div>
@@ -336,54 +470,152 @@ export default function AdminPage() {
         ) : view === 'orders' ? (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-semibold text-gray-700">주문 목록</span>
-                <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{orders.length}</span>
+                <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">전체 {orders.length}</span>
+                <span className="text-xs bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full">대기 {orders.filter(o => o.status === '대기').length}</span>
+                <span className="text-xs bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded-full">완료 {orders.filter(o => o.status === '완료').length}</span>
+                {newOrdersCount > 0 && (
+                  <button
+                    onClick={acknowledgeAllOrders}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-400 hover:bg-amber-500 text-white transition-colors"
+                  >
+                    <CheckCheck size={12} />
+                    주문확인 ({newOrdersCount}건)
+                  </button>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto">
               {orders.length === 0 ? (
                 <div className="py-10 text-center text-sm text-gray-400">주문 내역이 없습니다</div>
-              ) : (
-                <table className="w-full text-xs min-w-[700px]">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      {['출고예정일', '주문자', '모델', '호스', '수량', '출고처', '특이사항', '상태', ''].map((h, i) => (
-                        <th key={i} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((order, idx) => (
-                      <tr key={order.id} className={`border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 font-medium">{order.delivery_month}/{order.delivery_day}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.orderer_name}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.model_name}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.hose_name}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.quantity}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{order.destination || '-'}</td>
-                        <td className="px-3 py-2.5 text-gray-500 max-w-[100px] truncate">{order.note || '-'}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">
+              ) : (() => {
+                const totalPages = Math.ceil(orders.length / PAGE_SIZE);
+                const page = Math.min(currentPage, totalPages);
+                const pageOrders = orders.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+                return (
+                  <>
+                    <table className="w-full text-xs min-w-[700px]">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-100">
+                          {['수정', '상태', '출고예정일', '주문자', '모델', '호스', '수량', '출고처', '특이사항', ''].map((h, i) => (
+                            <th key={i} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageOrders.map((order, idx) => (
+                          <tr key={order.id} className={`border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${!order.acknowledged_at ? 'bg-amber-100' : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                            <td className="px-3 py-2.5 whitespace-nowrap">
+                              <button
+                                onClick={() => setEditingOrder(order)}
+                                className="p-1 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            </td>
+                            <td className="px-3 py-2.5 whitespace-nowrap">
+                              <button
+                                onClick={() => updateOrderStatus(order.id, STATUS_CYCLE[order.status] ?? '대기')}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}
+                              >
+                                {order.status === '완료' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                                {order.status}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 font-medium">{order.delivery_month}/{order.delivery_day}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.orderer_name}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.model_name}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.hose_name}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.quantity}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{order.destination || '-'}</td>
+                            <td className="px-3 py-2.5 text-gray-500 max-w-[100px] truncate">{order.note || '-'}</td>
+                            <td className="px-3 py-2.5 whitespace-nowrap">
+                              <button
+                                onClick={() => deleteOrder(order.id)}
+                                className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {totalPages > 1 && (
+                      <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+                        <span className="text-xs text-gray-400">{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, orders.length)} / {orders.length}건</span>
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={() => updateOrderStatus(order.id, order.status === '대기' ? '완료' : '대기')}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           >
-                            {order.status === '완료' ? <CheckCircle size={10} /> : <Clock size={10} />}
-                            {order.status}
+                            <ChevronLeft size={14} />
                           </button>
-                        </td>
-                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
+                            <button
+                              key={n}
+                              onClick={() => setCurrentPage(n)}
+                              className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${n === page ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'}`}
+                            >
+                              {n}
+                            </button>
+                          ))}
                           <button
-                            onClick={() => deleteOrder(order.id)}
-                            className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page === totalPages}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                           >
-                            <Trash2 size={13} />
+                            <ChevronRight size={14} />
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        ) : view === 'notices' ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+              <Megaphone size={15} className="text-amber-500" />
+              <span className="text-sm font-semibold text-gray-700">공지사항</span>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs text-gray-400">첫 화면에 표시될 공지사항을 입력하세요. 비워두면 표시되지 않습니다.</p>
+              <textarea
+                value={noticeContent}
+                onChange={e => setNoticeContent(e.target.value)}
+                rows={3}
+                maxLength={200}
+                placeholder="공지사항 내용을 입력하세요"
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none placeholder-gray-300 leading-relaxed"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">{noticeContent.length} / 200</span>
+                <button
+                  onClick={saveNotice}
+                  disabled={noticeSaving}
+                  className={`h-9 px-4 rounded-xl text-sm font-medium transition-colors flex items-center gap-1.5 ${noticeSaved ? 'bg-emerald-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60'}`}
+                >
+                  {noticeSaving ? (
+                    <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : noticeSaved ? (
+                    <Check size={14} />
+                  ) : null}
+                  {noticeSaved ? '저장됨' : '저장'}
+                </button>
+              </div>
+              {noticeContent.trim() && (
+                <div className="border-t border-gray-100 pt-3">
+                  <p className="text-xs text-gray-400 mb-2">미리보기</p>
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 flex gap-2.5 items-start">
+                    <Megaphone size={14} className="text-amber-500 mt-0.5 shrink-0" />
+                    <p className="text-sm text-amber-800 whitespace-pre-line leading-relaxed">{noticeContent}</p>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -467,6 +699,17 @@ export default function AdminPage() {
         )}
         <div className="h-4" />
       </div>
+
+      {editingOrder && (
+        <OrderEditModal
+          order={editingOrder}
+          models={masters.master_models}
+          hoses={masters.master_hoses}
+          onSave={data => updateOrder(editingOrder.id, data)}
+          onCancel={() => setEditingOrder(null)}
+          loading={editLoading}
+        />
+      )}
     </div>
   );
 }

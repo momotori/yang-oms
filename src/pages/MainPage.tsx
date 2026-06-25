@@ -99,7 +99,7 @@ export default function MainPage({ initialOrderer = '' }: { initialOrderer?: str
                 <ArrowLeft size={18} />
               </a>
               <ClipboardList size={20} className="text-blue-600" />
-              <span className="font-semibold text-gray-800 text-sm">부품 주문</span>
+              <span className="font-semibold text-gray-800 text-sm">첫화면</span>
             </div>
           </div>
           <a
@@ -205,7 +205,7 @@ export default function MainPage({ initialOrderer = '' }: { initialOrderer?: str
                   type="text"
                   value={form.quantity}
                   onChange={e => handleChange('quantity', e.target.value)}
-                  placeholder="예: 5개"
+                  placeholder="예: 5"
                   className="w-full h-11 px-3 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-300"
                 />
               </div>
@@ -227,7 +227,7 @@ export default function MainPage({ initialOrderer = '' }: { initialOrderer?: str
               <textarea
                 value={form.note}
                 onChange={e => handleChange('note', e.target.value)}
-                placeholder="특이사항을 입력하세요"
+                placeholder="특이사항을 입력하세요. 예: 해청, 2단, 착/화(구문천), 현/화/대납(구문천), 모터, 풀리, 벨트는 원자재로 등등"
                 rows={2}
                 className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-300 resize-none"
               />

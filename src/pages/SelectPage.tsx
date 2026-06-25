@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ClipboardList, Shield, ArrowRight, Users, User } from 'lucide-react';
+import { ClipboardList, Shield, ArrowRight, Users, User, Megaphone } from 'lucide-react';
 import { supabase, type MasterItem } from '../lib/supabase';
 
 const ADMIN_PATH = '/admin';
@@ -8,9 +8,11 @@ export default function SelectPage() {
   const [orderers, setOrderers] = useState<MasterItem[]>([]);
   const [selected, setSelected] = useState('');
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     fetchOrderers();
+    fetchNotice();
   }, []);
 
   async function fetchOrderers() {
@@ -20,6 +22,11 @@ export default function SelectPage() {
       .order('sort_order');
     if (data) setOrderers(data);
     setLoading(false);
+  }
+
+  async function fetchNotice() {
+    const { data } = await supabase.from('notices').select('content').limit(1).single();
+    if (data) setNotice(data.content);
   }
 
   function handleOrdererGo() {
@@ -37,6 +44,14 @@ export default function SelectPage() {
           <h1 className="text-xl font-bold text-gray-800">분무기 주문 시스템</h1>
           <p className="text-sm text-gray-500 mt-1">아래에서 항목을 선택해주세요</p>
         </div>
+
+        {/* Notice */}
+        {notice.trim() && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex gap-3 items-start">
+            <Megaphone size={16} className="text-amber-500 mt-0.5 shrink-0" />
+            <p className="text-sm text-amber-800 whitespace-pre-line leading-relaxed">{notice}</p>
+          </div>
+        )}
 
         {/* Orderer selection */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">

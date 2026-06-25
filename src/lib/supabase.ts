@@ -24,6 +24,8 @@ export type Order = {
   destination: string;
   note: string;
   status: string;
+  acknowledged_at: string | null;
+  updated_at: string | null;
 };
 
 export type OrderInsert = Omit<Order, 'id' | 'created_at'>;
