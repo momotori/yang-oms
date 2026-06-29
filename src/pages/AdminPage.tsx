@@ -504,12 +504,18 @@ export default function AdminPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pageOrders.map((order, idx) => (
-                          <tr key={order.id} className={`border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${!order.acknowledged_at ? 'bg-amber-100' : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                        {pageOrders.map((order, idx) => {
+                          const isModified = order.updated_at && order.created_at &&
+                            new Date(order.updated_at).getTime() - new Date(order.created_at).getTime() > 3000;
+                          const rowBg = !order.acknowledged_at ? 'bg-amber-100' : idx % 2 === 0 ? 'bg-yellow-50' : 'bg-green-50';
+                          return (
+                          <tr key={order.id} className={`border-b border-gray-100 hover:brightness-95 transition-colors ${rowBg}`}>
                             <td className="px-3 py-2.5 whitespace-nowrap">
                               <button
-                                onClick={() => setEditingOrder(order)}
-                                className="p-1 text-gray-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                                onClick={() => order.status !== '완료' && setEditingOrder(order)}
+                                disabled={order.status === '완료'}
+                                title={order.status === '완료' ? '완료된 주문은 수정할 수 없습니다' : '수정'}
+                                className={`p-1 rounded-lg transition-colors ${order.status === '완료' ? 'text-gray-200 cursor-not-allowed' : isModified ? 'text-amber-600 bg-yellow-300 hover:bg-yellow-400' : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'}`}
                               >
                                 <Pencil size={13} />
                               </button>
@@ -539,7 +545,8 @@ export default function AdminPage() {
                               </button>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                     {totalPages > 1 && (
