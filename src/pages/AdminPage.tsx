@@ -459,7 +459,7 @@ export default function AdminPage() {
                     className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 transition-colors ${view === 'orders' ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:bg-gray-50'}`}
                   >
                     <ClipboardListIcon size={15} />
-                    주문 관리
+                    주문 관리...
                   </button>
                   {SECTIONS.map(s => {
                     const Icon = s.icon;
