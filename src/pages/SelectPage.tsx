@@ -41,7 +41,7 @@ export default function SelectPage() {
           <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl shadow-lg shadow-blue-200 mb-3">
             <ClipboardList size={28} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold text-gray-800">분무기 주문 시스템</h1>
+          <h1 className="text-xl font-bold text-gray-800">분무기 주문 시스템test</h1>
           <p className="text-sm text-gray-500 mt-1">아래에서 항목을 선택해주세요</p>
         </div>
 
