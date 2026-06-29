@@ -129,7 +129,7 @@ export default function MainPage({ initialOrderer = '' }: { initialOrderer?: str
           <div className="px-4 py-4 space-y-3">
             {/* Delivery date */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1.5">출고예정일 <span className="text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">출고일 <span className="text-red-400">*</span></label>
               <div className="flex gap-2">
                 <select
                   value={form.delivery_month}
