@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, LogOut, Settings, Users, Box, Wrench, Bell, BellOff, ClipboardList as ClipboardListIcon, Pencil, CheckCheck, Megaphone } from 'lucide-react';
+import { Shield, Plus, Trash2, ArrowLeft, CheckCircle, Clock, CreditCard as Edit2, Check, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, LogOut, Settings, Users, Box, Wrench, Bell, BellOff, ClipboardList as ClipboardListIcon, Pencil, CheckCheck, Megaphone, Download } from 'lucide-react';
 import { supabase, type MasterItem, type Order, type OrderInsert } from '../lib/supabase';
 import OrderEditModal from '../components/OrderEditModal';
 
@@ -235,6 +235,11 @@ export default function AdminPage() {
       const aStatus = statusRank(a.status);
       const bStatus = statusRank(b.status);
       if (aStatus !== bStatus) return aStatus - bStatus;
+      if (a.status === '완료' && b.status === '완료') {
+        if (a.delivery_month !== b.delivery_month) return b.delivery_month - a.delivery_month;
+        if (a.delivery_day !== b.delivery_day) return b.delivery_day - a.delivery_day;
+        return a.orderer_name.localeCompare(b.orderer_name, 'ko');
+      }
       if (a.delivery_month !== b.delivery_month) return a.delivery_month - b.delivery_month;
       if (a.delivery_day !== b.delivery_day) return a.delivery_day - b.delivery_day;
       return a.orderer_name.localeCompare(b.orderer_name, 'ko');
@@ -321,6 +326,34 @@ export default function AdminPage() {
       .update({ acknowledged_at: new Date().toISOString() })
       .in('id', newOrderIds);
     fetchOrders();
+  }
+
+  function downloadExcel() {
+    const headers = ['상태', '출고일', '주문자', '모델', '호스', '수량', '출고처', '특이사항', '주문확인', '등록일시'];
+    const rows = orders.map(o => [
+      o.status,
+      `${o.delivery_month}/${o.delivery_day}`,
+      o.orderer_name,
+      o.model_name,
+      o.hose_name,
+      o.quantity,
+      o.destination,
+      o.note,
+      o.acknowledged_at ? new Date(o.acknowledged_at).toLocaleString('ko-KR') : '미확인',
+      new Date(o.created_at).toLocaleString('ko-KR'),
+    ]);
+
+    const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+    const csv = [headers, ...rows].map(r => r.map(escape).join(',')).join('\r\n');
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '-').replace('.', '');
+    a.href = url;
+    a.download = `주문목록_${today}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   if (authLoading) {
@@ -449,6 +482,18 @@ export default function AdminPage() {
                     <Megaphone size={15} />
                     공지사항
                   </button>
+                  {orders.length > 0 && (
+                    <>
+                      <div className="border-t border-gray-100 my-1" />
+                      <button
+                        onClick={() => { downloadExcel(); setMenuOpen(false); }}
+                        className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-emerald-600 hover:bg-emerald-50 transition-colors"
+                      >
+                        <Download size={15} />
+                        엑셀 다운로드
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -498,53 +543,59 @@ export default function AdminPage() {
                     <table className="w-full text-xs min-w-[700px]">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-100">
-                          {['수정', '상태', '출고예정일', '주문자', '모델', '호스', '수량', '출고처', '특이사항', ''].map((h, i) => (
+                          {['수정', '상태', '출고일', '주문자', '모델', '호스', '수량', '출고처', '특이사항', ''].map((h, i) => (
                             <th key={i} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {pageOrders.map((order, idx) => {
-                          const isModified = order.updated_at && order.created_at &&
-                            new Date(order.updated_at).getTime() - new Date(order.created_at).getTime() > 3000;
-                          const rowBg = !order.acknowledged_at ? 'bg-amber-100' : idx % 2 === 0 ? 'bg-yellow-50' : 'bg-green-50';
+                          const isWaiting = order.status === '대기';
+                          const rowBg = !order.acknowledged_at
+                            ? 'bg-white'
+                            : isWaiting
+                            ? idx % 2 === 0 ? 'bg-amber-50' : 'bg-emerald-50'
+                            : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50';
                           return (
-                          <tr key={order.id} className={`border-b border-gray-100 hover:brightness-95 transition-colors ${rowBg}`}>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              <button
-                                onClick={() => order.status !== '완료' && setEditingOrder(order)}
-                                disabled={order.status === '완료'}
-                                title={order.status === '완료' ? '완료된 주문은 수정할 수 없습니다' : '수정'}
-                                className={`p-1 rounded-lg transition-colors ${order.status === '완료' ? 'text-gray-200 cursor-not-allowed' : isModified ? 'text-amber-600 bg-yellow-300 hover:bg-yellow-400' : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50'}`}
-                              >
-                                <Pencil size={13} />
-                              </button>
-                            </td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              <button
-                                onClick={() => updateOrderStatus(order.id, STATUS_CYCLE[order.status] ?? '대기')}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}
-                              >
-                                {order.status === '완료' ? <CheckCircle size={10} /> : <Clock size={10} />}
-                                {order.status}
-                              </button>
-                            </td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 font-medium">{order.delivery_month}/{order.delivery_day}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.orderer_name}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.model_name}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.hose_name}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.quantity}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{order.destination || '-'}</td>
-                            <td className="px-3 py-2.5 text-gray-500 max-w-[100px] truncate">{order.note || '-'}</td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              <button
-                                onClick={() => deleteOrder(order.id)}
-                                className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </td>
-                          </tr>
+                            <tr key={order.id} className={`border-b border-gray-50 transition-colors ${rowBg}`}>
+                              <td className="px-3 py-2.5 whitespace-nowrap">
+                                <button
+                                  onClick={() => order.status !== '완료' && setEditingOrder(order)}
+                                  disabled={order.status === '완료'}
+                                  className={`p-1 rounded-lg transition-colors disabled:opacity-20 disabled:cursor-not-allowed disabled:hover:bg-transparent ${
+                                    order.updated_at && order.updated_at > order.created_at
+                                      ? 'text-amber-600 bg-amber-100 hover:bg-amber-200 hover:text-amber-700 disabled:hover:text-amber-600'
+                                      : 'text-gray-300 hover:text-blue-500 hover:bg-blue-50 disabled:hover:text-gray-300'
+                                  }`}
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              </td>
+                              <td className="px-3 py-2.5 whitespace-nowrap">
+                                <button
+                                  onClick={() => updateOrderStatus(order.id, STATUS_CYCLE[order.status] ?? '대기')}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'}`}
+                                >
+                                  {order.status === '완료' ? <CheckCircle size={10} /> : <Clock size={10} />}
+                                  {order.status}
+                                </button>
+                              </td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-700 font-medium">{order.delivery_month}/{order.delivery_day}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.orderer_name}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.model_name}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.hose_name}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{order.quantity}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap text-gray-600">{order.destination || '-'}</td>
+                              <td className="px-3 py-2.5 text-gray-500 max-w-[100px] truncate">{order.note || '-'}</td>
+                              <td className="px-3 py-2.5 whitespace-nowrap">
+                                <button
+                                  onClick={() => deleteOrder(order.id)}
+                                  className="p-1 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
                           );
                         })}
                       </tbody>
